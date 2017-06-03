@@ -1,327 +1,269 @@
-#include "Interpreter.h"
-#include <iostream>
-#include <string>
-#include <fstream>
-#include <vector>
-
-static char address[1000];
-static ifstream ifs;
-using namespace std;
-
-/////////////////////////////////////////////////
-/////Function No. 1:
-/////get the user input 
-string getInput()
+#include "stdafx.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
+#include <Openssl/rsa.h>
+#include <openssl/md5.h>
+#include <openssl/rand.h>
+#include <Openssl/sha.h>
+#include <openssl/bn.h>
+#pragma comment(lib, "libeay32.lib")
+#pragma comment(lib, "ssleay32.lib")
+#define N "FF807E694D915875B13F47ACDDA61CE11F62E034150F84660BF34026ABAF8C37"
+#define E "010001"
+#define D "45AEF3CB207EAD939BBDD87C8B0F0CFCC5A366A5AF2AC5FE1261D7547C625F51"
+unsigned char plaintext[] =
+"01. A quick brown fox jumps over the lazy dog.\n" \
+"02. A quick brown fox jumps over the lazy dog.\n" \
+"03. A quick brown fox jumps over the lazy dog.\n";
+unsigned char IV[] = "0123456789ABCDEFDEADBEEFBADBEAD!";
+unsigned char IV1[] = { 0xe3, 0x68, 0x2a, 0x22, 0x5b, 0x89, 0x90, 0xd9, 0x51,
+					   0x31, 0x52, 0xa2, 0xc8, 0xcb, 0x02, 0xb4, 0xdb, 0x9b,
+					   0xcb, 0x34, 0x85, 0xbc, 0x0c, 0xb6, 0x46, 0xc1, 0xf5,
+					   0x28, 0x5d, 0x25, 0xa1, 0xff
+};
+void dump_hex(unsigned char *p, int n, unsigned char *q)
 {
-	string SQLSentence;
-	string temp;
-	char str[100];
-	bool finish = false;
-	while (!finish)
+	int i;
+	for (i = 0; i<n; i++)
 	{
-		cin >> str;
-		temp = str;
-		SQLSentence = SQLSentence + " " + temp;
-		if (SQLSentence[SQLSentence.size() - 1] == ';')
-		{
-			SQLSentence[SQLSentence.size() - 1] = ' ';
-			SQLSentence += ";";
-			finish = true;
-		}
+		sprintf((char *)&q[i * 2], "%02X", p[i]);
 	}
-	return SQLSentence;
+	q[i * 2] = '\0';
 }
 
-/////////////////////////////////////////////////
-/////Function No. 2:
-/////analusis the select clause then change the object of condition class 
-int select_clause(string &SQLSentence,  int &SQLCurrentPointer, int &end, condition &SQLCondition)
+void scan_hex(unsigned char *p, int n, unsigned char *q)
 {
-	string currentWord;
-	//step1
-	SQLCondition.setInstruction(SELECT);
-
-	//step2
-	if ((end = SQLSentence.find(" from", SQLCurrentPointer)) == -1)//find " from"
+	int i;
+	for (i = 0; i<n; i++)
 	{
-		cout << "Error! Can not find key words \"from\"." << endl;//can not find from
-		return ERROR;
-	}
-
-	//step3
-	while (SQLSentence[end] == ' ')//select xxx from ooo, this is to find where is the end of xxx
-		--end;
-	while (SQLSentence[SQLCurrentPointer] == ' ' && end >= SQLCurrentPointer)//select xxx from ooo, this is to find where is the front of xxx
-		++SQLCurrentPointer;
-	end++;//adjust the pointer to the space right after xxx
-	currentWord = SQLSentence.substr(SQLCurrentPointer, end - SQLCurrentPointer);
-
-	//step4
-	if (currentWord.empty() == 1)//can not find col name
-	{
-		cout << "Error! Can not find col name." << endl;
-		return ERROR;
-	}
-
-	//step5
-	if (currentWord != "*")//not select all col name
-	{
-		int f = 0, e = 0;
-		string col;
-		while (e < currentWord.size())
-		{
-			if (currentWord[e] == ' ')
-			{
-				int flag = 0;
-				if (currentWord[e - 1] != ',')
-					flag = 1;
-				while (currentWord[e] == ' ' && e < currentWord.size())
-					++e;
-				if (flag && currentWord[e] != ',')
-				{
-					cout << "Error! col name must be separated by \',\'.";
-					return ERROR;
-				}
-				else if (currentWord[e] == ',')
-					f = ++e;
-				else
-					f = e;
-			}
-			while (currentWord[e] != ',' && currentWord[e] != ' ' && e < currentWord.size())
-				++e;
-			col = currentWord.substr(f, e - f);
-			SQLCondition.setColName(col);
-			f = e + 1;//move to next col
-			if (currentWord[e] == ',')
-				++e;
-			if (currentWord[e] == ' ')
-			{
-				int flag = 0;
-				if (currentWord[e - 1] != ',')
-					flag = 1;
-				while (currentWord[e] == ' ' && e <= currentWord.size())
-					++e;
-				if (e + 1 == currentWord.size() && flag == 1)
-				{
-					cout << "Error! col name has syntax error." << endl;
-					return ERROR;
-				}
-				if (flag && currentWord[e] != ',')
-				{
-					cout << "Error! col name must be separated by \',\'.";
-					return ERROR;
-				}
-				else if (currentWord[e] == ',')
-					f = ++e;
-				else
-					f = e;
-			}
-		}
-
-	}
-	else
-	{
-		SQLCondition.setColName(currentWord);
-	}
-
-	//step6
-	while (SQLSentence[end] == ' ')//select xxx from ooo, this is to find where is the front of from
-		++end;
-	SQLCurrentPointer = end;
-
-	//step7
-	end = SQLSentence.find(' ', SQLCurrentPointer);
-	if (end == -1)
-	{
-		cout << "Error! Can not find table name." << endl;
-		end = SQLSentence.find(';', SQLCurrentPointer);
-		SQLCurrentPointer = end;
-		return ERROR;
-	}
-	SQLCurrentPointer = end;
-
-	//step8
-	while (SQLSentence[end] == ' ')//select xxx from ooo, this is to find where is the front of ooo
-		++end;
-	SQLCurrentPointer = end;
-	while (SQLSentence[end] != ';' && SQLSentence[end] != ' ')
-		++end;
-	currentWord = SQLSentence.substr(SQLCurrentPointer, end - SQLCurrentPointer);
-
-	//step9
-	if (currentWord.empty() || currentWord == "where")
-	{
-		cout << "Error! the table name can not be found" << endl;
-		return ERROR;
-	}
-
-	//step10
-	SQLCondition.setTableName(currentWord);
-	//step11
-	while (SQLSentence[end] == ' ')
-		++end;
-	SQLCurrentPointer = end;
-	if (SQLSentence[end] == ';')
-		return SELECT;
-	else
-	{
-		///////to be continued
-		return SELECT;
+		sscanf((char *)&p[i * 2], "%02X", &q[i]);
 	}
 }
-
-/////////////////////////////////////////////////
-/////Function No. 3:
-/////analusis the drop clause then change the object of condition class 
-int drop_clause(string &SQLSentence, int &SQLCurrentPointer, int &end, condition &SQLCondition)
+int main()
 {
-	string currentWord;
-	//step1
-	SQLCondition.setInstruction(DROP);
+	int n = 0;
+	unsigned char ciphertext[512];
+	unsigned char ciphertext1[512];
+	unsigned char bufin[256];
+	unsigned char bufout[256];
+	unsigned char m1[16], m2[20];
+	unsigned char combine[36] = { 0 };
+	unsigned char temp = 0;
+	unsigned char final[256];
+	unsigned char part1_ci[512];
+	unsigned char part1_pl[512];
+	int i = 0;
+	int count = 0;
+	int length = 0;
+	RSA *prsa, *prsa1;
+	BIGNUM *pn, *pe, *pd;
 
-	//step2
-	end = SQLSentence.find("table", SQLCurrentPointer);
-	if (end != -1)//create table
+	prsa1 = RSA_new();
+	prsa1->flags |= RSA_FLAG_NO_BLINDING;
+	pn = BN_new();
+	pe = BN_new();
+	pd = BN_new();
+	BN_hex2bn(&pn, N);
+	BN_hex2bn(&pe, E);
+	BN_hex2bn(&pd, D);
+
+	prsa1->n = pn;
+	prsa1->e = pe;
+	prsa1->d = NULL;
+	n = RSA_size(prsa1);
+
+	//////////////////////////part1___step1___encrypt////////////////////////////
+	printf("plaintext=\n");
+	printf("%s", plaintext);
+	printf("Encrypting...\nciphertext=\n");
+	memset(bufout, 0, sizeof(bufout));
+	memset(part1_ci, 0, sizeof(part1_ci));
+	n = RSA_size(prsa1);
+	length = strlen(plaintext);
+	strcpy((char *)bufout, (char *)IV);
+	strncpy((char *)bufin, (char *)plaintext + count, n);
+	while (count + n < length)
 	{
-		SQLCurrentPointer = end;//move pointer to 't'("drop table oooo")
-		while (SQLSentence[end] != ' ' && end < SQLSentence.size())//move across "table"
-			++end;
-		while (SQLSentence[end] == ' ' && end < SQLSentence.size())
-			++end;
-		if (SQLSentence[end] == ';')//lose table name
-		{
-			cout << "Error! can not find table name." << endl;
-			return ERROR;
-		}
-
+		for (i = 0; i < n; ++i)
+			bufin[i] ^= bufout[i];
+		RSA_public_encrypt(n, bufin, bufout, prsa1, RSA_NO_PADDING);
+		for (i = 0; i < n; ++i)
+			part1_ci[i + count] = bufout[i];
+		count += n;
+		strncpy((char *)bufin, (char *)plaintext + count, n);
 	}
-	else//create index
+	count -= n;
+	strncpy((char *)bufout, (char *)plaintext + count + n, length - count);
+	strncpy((char *)bufin, (char *)part1_ci + count, n);
+	strncpy((char *)part1_ci + count + n, (char *)part1_ci + count, length - count);
+	for (i = 0; i < length - count; ++i)
+		bufin[i] ^= bufout[i];
+	RSA_public_encrypt(n, bufin, bufout, prsa1, RSA_NO_PADDING);
+	for (i = 0; i < n; ++i)
+		part1_ci[i + count] = bufout[i];
+	for (i = 0; i < length; i++)
+		printf("%02X", part1_ci[i]);
+	printf("\n");
+
+	//////////////////////////part1___step2___decrypt////////////////////////////
+	prsa1->n = pn;
+	prsa1->e = NULL;
+	prsa1->d = pd;
+	n = RSA_size(prsa1);
+
+
+	memset(bufout, 0, sizeof(bufout));
+	memset(bufin, 0, sizeof(bufout));
+	memset(part1_pl, 0, sizeof(part1_pl));
+	strncpy((char *)bufin, (char *)part1_ci + count, n);
+	RSA_private_decrypt(n, bufin, bufout, prsa1, RSA_NO_PADDING);
+
+	///////////////////////////////////////////////////////////////////
+	memset(bufin, 0, sizeof(bufout));
+	memcpy((char *)bufin, (char *)bufout, length - count - n);
+	memcpy((char *)bufout, (char *)part1_ci + count + n, length - count);
+	for (i = 0; i < length - count - n; ++i)
+		bufin[i] ^= bufout[i];
+	strncpy((char *)part1_pl + count + n, (char *)bufin, length - count);
+	strncpy((char *)bufin, (char *)part1_ci + count + n, length - count);
+	memset(&bufin[32], 0, sizeof(unsigned char) * 32);
+	RSA_private_decrypt(n, bufin, bufout, prsa1, RSA_NO_PADDING);
+	strncpy((char *)bufin, (char *)bufout, n);
+
+
+	strncpy((char *)bufout, (char *)part1_ci + count - n, n);
+	do
 	{
-
-	}
-}
-int interpreter(string &SQLSentence, int &fileReadFlag, condition &SQLCondition)
-{
-	string firstWord;
-	int SQLCurrentPointer = 0, end = 0;
-	int code = 0;
-
-
-	//////////////////////input part/////////////////////////////////////////////
-	if (SQLSentence.empty() && fileReadFlag == 1)//the sentence is empty and now it is time to read file
-	{
-		getline(ifs, SQLSentence);
-		if (SQLSentence.empty())//the file has come to end, but doesn't have a quit command;
-		{
-			cout << "ERROR! This file doesn't have a quit command\n" << endl;
-			fileReadFlag = 0;//back to keyboard input
-			SQLSentence = "";
-			ifs.close();
-			return QUIT_NUMBER;
-		}
-		cout << SQLSentence << endl;
-	}
-	else if(SQLSentence.empty())
-		SQLSentence = getInput();
-	//////////////////////instruction analysis part//////////////////////////////////
-
-
-	while (SQLSentence[SQLCurrentPointer] == ' ')//get rid of the ' ' from the beginning of the sentence
-		SQLCurrentPointer++;
-	end = SQLSentence.find(' ', SQLCurrentPointer);
-	if (end == -1)
-	{
-		end = SQLSentence.find(';', SQLCurrentPointer);//example:"quit;", then there does not have a ' '.
-	}
-	firstWord = SQLSentence.substr(SQLCurrentPointer, end - SQLCurrentPointer);//get the first word from SQL sentence
-	SQLCurrentPointer = end;//pointer move forward
-
-
-
-	///////start to analysis the sentence
-	if (firstWord == "select")
-	{
-		code = select_clause(SQLSentence, SQLCurrentPointer, end, SQLCondition);
-	}
-	else if (firstWord == "insert")
-	{
-
-	}
-	else if (firstWord == "quit")
-	{
-		string nextWord;
-		while (SQLSentence[SQLCurrentPointer] == ' ')//get rid of the ' ' after the first word
-			SQLCurrentPointer++;
-		end = SQLSentence.find(' ', SQLCurrentPointer);//get the next word
-		nextWord = SQLSentence.substr(SQLCurrentPointer, end - SQLCurrentPointer);//check whether the quit instruction
-																				  //has other words. example:"quit select;"
-		if (nextWord == ";")//we can only find ';'	
-			return QUIT_NUMBER;
+		for (i = 0; i < n; ++i)
+			bufin[i] ^= bufout[i];
+		for (i = 0; i < n; ++i)
+			part1_pl[i + count] = bufin[i];
+		count -= n;
+		memcpy((char *)bufin, (char *)part1_ci + count, n);
+		RSA_private_decrypt(n, bufin, bufout, prsa1, RSA_NO_PADDING);
+		memcpy((char *)bufin, (char *)bufout, n);
+		if(count == 0)
+			memcpy((char *)bufout, (char *)IV, n);
 		else
-			cout << "Error! Quit instruction should has only one key word \"quit\"\n";
-	}
-	else if (firstWord == "delect")
-	{
+			memcpy((char *)bufout, (char *)part1_ci + count - n, n);
+	} while (count + n > 0);
+	printf("Decrypting...\nplaintext=\n");
+	printf("%s", part1_pl);
+	RSA_free(prsa1);//free
+					//////////////////////////part3___step1___hash////////////////////////////
+	MD5(plaintext, strlen(plaintext), m1);
+	SHA1(plaintext, strlen(plaintext), m2);
+	printf("\nmd5=\n");
+	for (i = 0; i < 16; i++)
+		printf("%02X", m1[i]);
+	printf("\n");
+	printf("sha-1=\n");
+	for (i = 0; i < 20; i++)
+		printf("%02X", m2[i]);
+	//////////////////////////part3___step2___combine/////////////////////////
+	for (i = 0; i < 16; i++)
+		combine[i] = m1[i];
+	for (i = 0; i < 20; i++)
+		combine[i + 16] = m2[i];
+	printf("\nmd5+sha-1=\n");
+	for (i = 0; i < 36; i++)
+		printf("%02X", combine[i]);
+	//////////////////////////part3___step3___encrypt/////////////////////////
+	prsa = RSA_new();
+	prsa->flags |= RSA_FLAG_NO_BLINDING;
+	pn = BN_new();
+	pe = BN_new();
+	pd = BN_new();
+	BN_hex2bn(&pn, N);
+	BN_hex2bn(&pe, E);
+	BN_hex2bn(&pd, D);
 
-	}
-	else if (firstWord == "exec")//execute the script
+	prsa->n = pn;
+	prsa->e = NULL;
+	prsa->d = pd;
+	n = RSA_size(prsa);
+	///////////////////////ready
+	memset(bufin, 0, sizeof(bufin));
+	memset(bufout, 0, sizeof(bufout));
+	for (i = 0; i < 32; ++i)
 	{
-		string temp;
-		while (SQLSentence[SQLCurrentPointer] == ' ')//get rid of the ' ' from the beginning of the sentence
-			SQLCurrentPointer++;
-		end = SQLSentence.find(' ', SQLCurrentPointer);
-		temp = SQLSentence.substr(SQLCurrentPointer + 1, end - SQLCurrentPointer - 2);
-		strcpy(address, temp.c_str());//copy the address to array
-		if (freopen(address, "r", stdin) == 0)//can not open
-		{
-			cout << "The file " << address << " was not opened\n";
-		}  
-		else
-		{
-			cout << "The file " << address << " was opened\n";
-			fileReadFlag = 1;
-			ifs.open(address);
-		}
-		SQLCurrentPointer = end;
+		bufin[i] = combine[i];
 	}
-	else if (firstWord == "drop")
-	{
-		code = drop_clause(SQLSentence, SQLCurrentPointer, end, SQLCondition);
-	}
-	else//input is wrong
-	{
-		cout << "Error! Doesn't found a instruction key word!";
-		return ERROR;
-	}
-	if (SQLSentence[SQLCurrentPointer + 1] == ';')
-		SQLCurrentPointer += 2;
-	else
-	{
-		while (SQLSentence[SQLCurrentPointer] == ' ')//get rid of the ' ' in the rest fo the sentence
-			SQLCurrentPointer++;
-		while (SQLSentence[SQLCurrentPointer] == ';')//find ';'
-			SQLCurrentPointer++;
 
-	}
-	
-	SQLSentence.erase(0, SQLCurrentPointer);//clear
-	return code;
-}
-
-int main(int argc, char *argv[]) // this is just a test main function
-{
-	string SQLSentence;
-	condition SQLCondition;
-	int conditionCode = 0;
-	int stop = 0;
-	int fileReadFlag = 0;
-	while (!stop)
+	puts("\nEncrypting...");
+	n = RSA_private_encrypt(n, bufin, bufout, prsa, RSA_NO_PADDING);
+	dump_hex(bufout, 4, &ciphertext[64]);//tail
+										 //first part final¡ü
+	memset(bufin, 0, sizeof(bufin));
+	for (i = 0; i < 4; ++i)
 	{
-		conditionCode = interpreter(SQLSentence, fileReadFlag, SQLCondition);
-		if (conditionCode == QUIT_NUMBER)
-			stop = 1;
+		bufin[i] = combine[i + 32];
 	}
-	cout << "Press Any Key to Continue..." << endl;
+	for (i = 0; i < 28; ++i)
+	{
+		bufin[i + 4] = bufout[i + 4];
+	}
+	memset(bufout, 0, sizeof(bufout));
+	n = RSA_private_encrypt(32, bufin, bufout, prsa, RSA_NO_PADDING);
+	temp = ciphertext[64];
+	dump_hex(bufout, n, ciphertext);
+	ciphertext[64] = temp;
+
+	printf("signature=\n%s\n", ciphertext);
+	//////////////////////////part3___step3___decrypt/////////////////////////
+	scan_hex(ciphertext, 36, ciphertext1);
+	puts("Decrypting...\nplaintext=");
+	prsa->e = pe;
+	prsa->d = NULL;
+	n = 32;
+
+	//set bufin
+	for (i = 0; i < 32; ++i)//copy head part
+	{
+		bufin[i] = ciphertext1[i];
+	}
+	memset(bufout, 0, sizeof(bufout));//set bufout
+	n = RSA_public_decrypt(n, bufin, bufout, prsa, RSA_NO_PADDING);
+	for (i = 0; i < 4; ++i)//copy the last block
+	{
+		final[i + 32] = bufout[i];
+	}
+
+
+
+
+	///////////follow part is to decrypt the n-1 block////////////////
+	for (i = 0; i < 4; ++i)//copy head part
+	{
+		bufin[i] = ciphertext1[i + 32];
+	}
+	//stealing
+	for (i = 0; i < 28; ++i)//copy tail part
+	{
+		bufin[i + 4] = bufout[i + 4];
+	}
+	/////////////bufin has been set/////////////////////////////
+
+
+
+
+
+	memset(bufout, 0, sizeof(bufout));
+	n = RSA_public_decrypt(n, bufin, bufout, prsa, RSA_NO_PADDING);
+	for (i = 0; i < 32; ++i)//copy the n-1 block to the final
+	{
+		final[i] = bufout[i];
+	}
+	for (i = 0; i < 36; ++i)
+	{
+		printf("%02X", final[i]);
+	}
+	if (!memcmp(final, combine, 36))
+	{
+		printf("\nSignature is correct.");
+	}
 	getchar();
 	return 0;
 }
